@@ -54,6 +54,8 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,7 +67,20 @@ jobs:
           git remote add upstream https://github.com/xream/EdgeGist.git
           git fetch upstream
           git checkout main
-          git merge upstream/main --no-edit
+          git pull origin main --rebase
+          
+          # 尝试正常合并
+          if ! git merge upstream/main --no-edit; then
+            echo "发现冲突，开始自动保留本地配置..."
+            # 如果冲突，强制保留我们自己的 .github 文件夹
+            git checkout HEAD -- .github/ || true
+            git add .github/ || true
+            # 强制删除原作者的 release 脚本
+            git rm -rf .github/workflows/release.yml || true
+            # 提交合并
+            git commit --no-edit
+          fi
+          
           git push origin main
 ```
 
@@ -91,9 +106,12 @@ jobs:
         with:
           node-version: 22
       - uses: oven-sh/setup-bun@v2
-      - name: Install & Build
+        with:
+          bun-version: latest
+      - name: Install dependencies
+        run: bun install
+      - name: Generate wrangler.jsonc from Secrets
         run: |
-          bun install
           cp wrangler.example.jsonc wrangler.jsonc
           sed -i 's/"name": "edge-gist"/"name": "gist"/g' wrangler.jsonc
           sed -i "s/\"owner\"/\"${{ secrets.OWNER_USERNAME }}\"/g" wrangler.jsonc
@@ -101,11 +119,12 @@ jobs:
           sed -i "s/\"change-this-token\"/\"${{ secrets.OWNER_TOKEN }}\"/g" wrangler.jsonc
           sed -i "s|https://edge-gist.your-subdomain.workers.dev|${{ secrets.BASE_URL }}|g" wrangler.jsonc
           sed -i "s/\"replace-with-cloudflare-d1-database-id\"/\"${{ secrets.D1_DATABASE_ID }}\"/g" wrangler.jsonc
-          bun run build
-      - name: Deploy
-        run: npx wrangler deploy
+      - name: Build
+        run: bun run build
+      - name: Deploy to Cloudflare
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: npx wrangler deploy
 ```
 
 ---
